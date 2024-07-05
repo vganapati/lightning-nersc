@@ -8,7 +8,7 @@ Instructions for running on Perlmutter:
 > module load pytorch
 > export NUM_NODES=4 # Can use up to 4 nodes in interactive mode on Perlmutter
 > export TOTAL_GPUS=$((${NUM_NODES}*4))
-> export SRUN_CPUS_PER_TASK=32 #$((32/${NUM_NODES}))
+> export SRUN_CPUS_PER_TASK=32
 > salloc --nodes $NUM_NODES --qos interactive --time 01:00:00 --constraint gpu --gpus $TOTAL_GPUS --account=m3562_g --ntasks-per-node=4 --cpus-per-task=$SRUN_CPUS_PER_TASK
 > srun --ntasks-per-node=4 --gpus $TOTAL_GPUS --cpus-per-task=$SRUN_CPUS_PER_TASK --nodes $NUM_NODES python3 tutorials/level_1.py
 
