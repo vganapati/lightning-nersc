@@ -10,7 +10,7 @@ Instructions for running on Perlmutter:
 > export TOTAL_GPUS=$((${NUM_NODES}*4))
 > export SRUN_CPUS_PER_TASK=32
 > salloc --nodes $NUM_NODES --qos interactive --time 01:00:00 --constraint gpu --gpus $TOTAL_GPUS --account=m3562_g --ntasks-per-node=4 --cpus-per-task=$SRUN_CPUS_PER_TASK
-> srun --ntasks-per-node=4 --gpus $TOTAL_GPUS --cpus-per-task=$SRUN_CPUS_PER_TASK --nodes $NUM_NODES python3 tutorials/level_1.py
+> srun --ntasks-per-node=4 --gpus $TOTAL_GPUS --cpus-per-task=$SRUN_CPUS_PER_TASK --nodes $NUM_NODES python3 basic_nersc_template.py
 
 Known Issue:
 The following warning prints when running on an interactive node. This may not be a problem and may disappear when we try with a batch script.
@@ -28,8 +28,12 @@ import lightning as L
 from lightning.pytorch.plugins.environments import SLURMEnvironment
 from lightning.pytorch.strategies import DDPStrategy
 
+from custom_data_module import MNISTDataModule 
+
 torch.set_float32_matmul_precision('medium')
 # torch.set_float32_matmul_precision('high')
+
+use_custom_data_module = True
 
 # Define the PyTorch nn.Modules
 
@@ -66,14 +70,30 @@ class LitAutoEncoder(L.LightningModule):
         loss = F.mse_loss(x_hat, x)
         return loss
     
+    def test_step(self, batch, batch_idx):
+        # this is the test loop
+        x, _ = batch
+        x = x.view(x.size(0), -1)
+        z = self.encoder(x)
+        x_hat = self.decoder(z)
+        test_loss = F.mse_loss(x_hat, x)
+        self.log("test_loss", test_loss, sync_dist=True)
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
         return optimizer
     
 # Define the training dataset
 
-dataset = MNIST(os.getcwd(), download=True, transform=transforms.ToTensor())
-train_loader = DataLoader(dataset, num_workers=16)
+if use_custom_data_module:
+    mnist = MNISTDataModule(os.getcwd())
+else:
+    transform = transforms.ToTensor()
+    train_set = MNIST(os.getcwd(), download=True, train=True, transform=transform)
+    test_set = MNIST(os.getcwd(), download=True, train=False, transform=transform)
+
+    train_loader = DataLoader(train_set, num_workers=16, batch_size=32)
+    test_loader = DataLoader(test_set, num_workers=16, batch_size=32)
 
 # Instantiate the model
 autoencoder = LitAutoEncoder(Encoder(), Decoder()) 
@@ -84,5 +104,12 @@ strategy = DDPStrategy(find_unused_parameters=False,
                        cluster_environment=cluster_environment)
 
 # Train the model
-trainer = L.Trainer(accelerator="gpu", devices=4, num_nodes=int(os.environ['NUM_NODES']), strategy=strategy, max_epochs=10)
-trainer.fit(model=autoencoder, train_dataloaders=train_loader)
+trainer = L.Trainer(accelerator="gpu", devices=4, num_nodes=int(os.environ['NUM_NODES']), strategy=strategy, max_epochs=2)
+
+if use_custom_data_module:
+    trainer.fit(autoencoder, mnist)
+    trainer.test(autoencoder, mnist)
+else:
+    trainer.fit(autoencoder, train_loader)
+    trainer.test(autoencoder, test_loader)
+
